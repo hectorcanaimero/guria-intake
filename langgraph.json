@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "intake": "./grafo.py:build_graph"
+  },
+  "env": ".env"
+}

@@ -1,0 +1,24 @@
+[project]
+name = "guria-intake"
+version = "0.1.0"
+description = "Agente LangChain que redacta borradores de intake para guria.lat"
+authors = [
+    { name = "Héctor Alejandro", email = "rodriguez.hectoralejandro@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.142.2",
+    "langchain>=1.4.3",
+    "langchain-openai>=1.6.7",
+    "langgraph-checkpoint-sqlite>=3.1.1",
+    "python-multipart>=0.0.32",
+    "typesafe-sdk>=0.7.2",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "langgraph-cli[inmem]>=0.4.32",
+    "pytest>=9.1.1",
+]
