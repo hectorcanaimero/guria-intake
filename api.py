@@ -1,17 +1,14 @@
 """API del widget de chat: cada mensaje del navegador entra por /api/chat."""
 
-import json
-import logging
 import time
 from collections import defaultdict, deque
-from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import db
 from chat import archivo, build_chat
-from grafo import build_graph, procesar
+from grafo import build_graph, completar_borrador
 
 MAX_TURNOS = 30        # mensajes del usuario por sesión
 MAX_POR_HORA = 60      # mensajes por IP por hora
@@ -19,7 +16,6 @@ MAX_POR_HORA = 60      # mensajes por IP por hora
 app = FastAPI()
 chat = build_chat()
 graph = build_graph()
-log = logging.getLogger("uvicorn.error")
 _recientes: dict[str, deque] = defaultdict(deque)
 
 
@@ -43,17 +39,6 @@ def limitar(ip: str) -> None:
     q.append(ahora)
 
 
-def correr_grafo(destino: Path) -> None:
-    # El formulario ya está en disco (lo escribió enviar_intake): si el modelo falla, el lead no se pierde.
-    registro = json.loads(destino.read_text()) | {"error": None}
-    try:
-        registro |= procesar(registro["formulario"], graph)
-    except Exception as e:
-        log.exception("intake: falló el grafo")
-        registro["error"] = repr(e)
-    destino.write_text(json.dumps(registro, ensure_ascii=False, indent=2))
-
-
 @app.post("/api/chat")
 def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Salida:
     # Detrás de Caddy, la IP real llega en X-Forwarded-For.
@@ -62,7 +47,7 @@ def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Sal
 
     sesion = db.registrar_turno(entrada.thread_id)
     if sesion["estado"] == "enviada":
-        return Salida(respuesta="Ya recibí tu proyecto: Héctor te escribe por email en 24 h. · Já recebi seu projeto: o Héctor te escreve por e-mail em 24 h.", terminado=True)
+        return Salida(respuesta="Ya recibí tu proyecto: el equipo de Guria se va a poner en contacto por email. · Já recebi seu projeto: a equipe da Guria vai entrar em contato por e-mail.", terminado=True)
     if sesion["estado"] == "cerrada":
         return Salida(respuesta="Esta charla terminó. Si tenés un proyecto, abrí una nueva cuando quieras. · Esta conversa terminou. Se tiver um projeto, abra uma nova quando quiser.", terminado=True)
     if sesion["turnos"] > MAX_TURNOS:
@@ -73,5 +58,5 @@ def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Sal
     r = chat.invoke({"messages": [{"role": "user", "content": entrada.mensaje}]}, config)
     nuevo = db.estado(entrada.thread_id)
     if nuevo == "enviada":  # enviar_intake corrió en este turno: arranca el borrador en segundo plano
-        tasks.add_task(correr_grafo, archivo(entrada.thread_id))
+        tasks.add_task(completar_borrador, archivo(entrada.thread_id), graph)
     return Salida(respuesta=r["messages"][-1].text, terminado=nuevo != "abierta")

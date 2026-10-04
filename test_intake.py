@@ -15,6 +15,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 import api
+import grafo
 import chat as chat_mod
 import db
 import mantenimiento
@@ -42,9 +43,12 @@ def test_revisar_y_ciclo():
     estado = {"encaje": {"tope_usd": 2000}, "casos": [{"nombre": "Showly"}], "intentos": 1}
     assert revisar({**estado, "borrador": borrador()})["problemas"] == []
 
+    # superar el presupuesto NO es un problema: la estimación tiene que ser honesta
+    assert revisar({**estado, "borrador": borrador(usd_min=8000, usd_max=15000)})["problemas"] == []
+
     malo = borrador(usd_min=3000, usd_max=2500, caso_relacionado="Inventado")
     problemas = revisar({**estado, "borrador": malo})["problemas"]
-    assert len(problemas) == 3
+    assert len(problemas) == 2
     # con problemas vuelve a redactar, salvo que ya gastó los intentos
     assert despues_de_revisar({**estado, "problemas": problemas}) == "redactar"
     assert despues_de_revisar({**estado, "problemas": problemas, "intentos": MAX_INTENTOS}) == "__end__"
@@ -68,7 +72,7 @@ def chat_falso(monkeypatch, tmp_path, respuestas):
     guion = iter(respuestas)  # compartido: un agente "reiniciado" sigue el mismo guion
     monkeypatch.setattr(chat_mod, "_modelo", lambda: FakeConTools(messages=guion))
     monkeypatch.setattr(api, "chat", chat_mod.build_chat())
-    monkeypatch.setattr(api, "procesar", lambda f, g: {"borrador": {"resumen": "ok"}})
+    monkeypatch.setattr(grafo, "procesar", lambda f, g: {"borrador": {"resumen": "ok"}})
     api._recientes.clear()
     return TestClient(api.app)
 
@@ -165,3 +169,20 @@ def test_borrar_por_email(tmp_path, monkeypatch):
     mantenimiento.borrar(saver, fila[0])
     assert db.estado("lead-0001") is None and not (tmp_path / "lead-0001.json").exists()
     assert mantenimiento.mensajes(saver, "lead-0001") == []
+
+
+def test_redactar_reintenta_si_falta_un_campo(monkeypatch):
+    """Si el modelo omite un campo obligatorio, el nodo se reintenta en vez de tumbar el grafo."""
+    llamadas = []
+
+    def redactar_falso(estado):
+        llamadas.append(1)
+        if len(llamadas) == 1:
+            Borrador.model_validate({"resumen": "sin encaja"})  # lanza ValidationError
+        return {"borrador": borrador(), "intentos": estado["intentos"] + 1}
+
+    monkeypatch.setattr(grafo, "triage", lambda e: {"triage": Triage(vaga=False, faltantes=[])})
+    monkeypatch.setattr(grafo, "redactar", redactar_falso)
+    g = grafo.build_graph()
+    r = grafo.procesar({**DATOS, "tipo": "whatsapp", "empresa": ""}, g)
+    assert len(llamadas) == 2 and r["borrador"]["resumen"] == "r"

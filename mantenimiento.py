@@ -6,7 +6,7 @@
     python mantenimiento.py ver <thread_id>       la charla completa, para revisarla a mano
     python mantenimiento.py borrar <email|thread_id>   pedido de borrado (LGPD)
 
-Las charlas NO cambian al agente solas: el reporte es para que Héctor decida qué
+Las charlas NO cambian al agente solas: el reporte es para que el equipo decida qué
 mejorar en el prompt. Así nadie puede "enseñarle" cosas al bot desde el chat.
 """
 
@@ -34,7 +34,7 @@ CATEGORIAS = {
         "es": "Tiene un negocio o un proyecto concreto con un problema de software o IA.",
         "no_es": "Preguntas generales sin un proyecto propio.",
     },
-    "curioso": "Pregunta qué hace Héctor, cómo funciona el bot o precios en general, sin un proyecto concreto.",
+    "curioso": "Pregunta qué hace Guria, cómo funciona el bot o precios en general, sin un proyecto concreto.",
     "fuera_de_alcance": "Tiene un proyecto real, pero no es de software ni de IA (logo, contabilidad, marketing…).",
     "jugando": {
         "es": "Prueba al bot, bromea o pide cosas sin relación (chistes, poemas) sin un proyecto.",

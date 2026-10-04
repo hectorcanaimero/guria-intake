@@ -1,4 +1,4 @@
-"""Workflow que convierte un intake completo en un borrador interno para Héctor.
+"""Workflow que convierte un intake completo en un borrador interno para el equipo.
 
 El flujo es fijo (StateGraph); el modelo solo trabaja dentro de cada nodo:
 
@@ -7,12 +7,16 @@ El flujo es fijo (StateGraph); el modelo solo trabaja dentro de cada nodo:
                                                 ↑__________________|(problemas)
 """
 
+import json
+import logging
 import os
+from pathlib import Path
 from typing import TypedDict
 
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from langgraph.types import RetryPolicy
+from pydantic import BaseModel, Field, ValidationError
 
 from intake import SYSTEM, Borrador, buscar_casos, evaluar_encaje, formulario_a_texto
 
@@ -61,7 +65,7 @@ def triage(estado: Estado) -> Estado:
 
 
 def pedir_datos(estado: Estado) -> Estado:
-    # Sin LLM: el triage ya escribió las preguntas. Héctor se las manda al cliente.
+    # Sin LLM: el triage ya escribió las preguntas que el equipo le hará al cliente.
     return {"problemas": ["Descripción insuficiente: pedir datos antes de estimar."]}
 
 
@@ -88,8 +92,8 @@ def revisar(estado: Estado) -> Estado:
     problemas = []
     if b.semanas_min > b.semanas_max or b.usd_min > b.usd_max:
         problemas.append("Rango invertido: el mínimo es mayor que el máximo.")
-    if tope and b.usd_min > tope:
-        problemas.append(f"usd_min ({b.usd_min}) supera el presupuesto declarado ({tope}).")
+    # Sin regla de presupuesto: forzar que la estimación "entre" premia mentir.
+    # Si no entra, el prompt pide decirlo en nota_interna y proponer una etapa menor.
     nombres = {c["nombre"] for c in estado["casos"]}
     if b.caso_relacionado and b.caso_relacionado not in nombres:
         problemas.append(f"caso_relacionado '{b.caso_relacionado}' no existe; usá uno de {sorted(nombres)} o null.")
@@ -111,10 +115,14 @@ def despues_de_revisar(estado: Estado) -> str:
 def build_graph():
     g = StateGraph(Estado)
     g.add_node("evaluar", evaluar)
-    g.add_node("triage", triage)
+    # Los modelos a veces omiten un campo obligatorio. LangGraph no reintenta ValidationError
+    # por defecto (lo trata como bug), así que se lo pedimos en los nodos que llaman al LLM.
+    # Los errores de red ya los reintenta el cliente de OpenAI.
+    reintento = RetryPolicy(max_attempts=3, retry_on=ValidationError)
+    g.add_node("triage", triage, retry_policy=reintento)
     g.add_node("pedir_datos", pedir_datos)
     g.add_node("buscar", buscar)
-    g.add_node("redactar", redactar)
+    g.add_node("redactar", redactar, retry_policy=reintento)
     g.add_node("revisar", revisar)
 
     g.add_edge(START, "evaluar")
@@ -139,6 +147,18 @@ def resumir(s: Estado) -> dict:
 
 def procesar(formulario: dict, graph=None) -> dict:
     return resumir((graph or build_graph()).invoke({"formulario": formulario}))
+
+
+def completar_borrador(destino: Path, graph=None) -> None:
+    """Agrega el borrador al JSON que dejó enviar_intake. Lo usan la API y el chat de terminal."""
+    # El formulario ya está en disco: si el modelo falla, el lead no se pierde.
+    registro = json.loads(destino.read_text()) | {"error": None}
+    try:
+        registro |= procesar(registro["formulario"], graph)
+    except Exception as e:
+        logging.getLogger("uvicorn.error").exception("intake: falló el grafo")
+        registro["error"] = repr(e)
+    destino.write_text(json.dumps(registro, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

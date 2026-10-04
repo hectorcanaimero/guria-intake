@@ -27,7 +27,7 @@ PRESUPUESTO_MAX_USD = {
 
 @tool
 def buscar_casos(tipo: str) -> list[dict]:
-    """Devuelve los proyectos de Héctor que sirven de referencia para un tipo de
+    """Devuelve los proyectos del equipo que sirven de referencia para un tipo de
     proyecto (producto, agentes, whatsapp, showly, infra, otro)."""
     return [c for c in CASOS if tipo in c["tipos"]] or CASOS
 
@@ -56,27 +56,25 @@ class Borrador(BaseModel):
     usd_min: int
     usd_max: int
     caso_relacionado: str | None = Field(description="Nombre de un caso de buscar_casos, o null.")
-    preguntas_abiertas: list[str] = Field(description="Lo que falta saber para cerrar la estimación.")
-    encaja: bool = Field(description="Si el proyecto encaja con lo que Héctor hace.")
-    nota_interna: str = Field(description="Comentario para Héctor, no para el cliente.")
+    preguntas_abiertas: list[str] = Field(description="Lo que falta saber para cerrar la propuesta.")
+    encaja: bool = Field(description="Si el proyecto encaja con lo que hace el equipo.")
+    nota_interna: str = Field(description="Comentario para el equipo, no para el cliente.")
 
 
-SYSTEM = """Sos el asistente de intake de Héctor Rodríguez (guria.lat), ingeniero de \
-software sénior que lleva IA a producción para negocios de Brasil y LATAM.
+SYSTEM = """Preparás el borrador INTERNO de un intake de guria.lat, un equipo que lleva \
+IA a producción para negocios de Brasil y LATAM. El equipo lo lee antes de la reunión \
+con el cliente; nunca le hablás al cliente directamente.
 
-Recibís un formulario de un posible cliente. Redactá un BORRADOR que Héctor va a \
-revisar antes de enviar; nunca le hablás al cliente directamente.
-
-Proceso:
-1. Llamá a evaluar_encaje con el presupuesto y el plazo.
-2. Llamá a buscar_casos con el tipo de proyecto y elegí como mucho un caso relacionado.
-3. Devolvé el Borrador.
+Recibís el formulario, el encaje con el presupuesto y los casos de referencia del equipo.
 
 Reglas:
 - Si la descripción es vaga, no inventes requisitos: estimá con rango amplio y \
 poné las dudas en preguntas_abiertas.
-- La estimación tiene que respetar el presupuesto declarado o decir en nota_interna \
-por qué no entra.
+- Estimá lo que el proyecto cuesta de verdad, aunque no entre en el presupuesto \
+declarado. No achiques la estimación para que entre: si no entra, decilo en \
+nota_interna y proponé una primera etapa más chica que sí entre (por ejemplo, \
+validar la idea antes de construir).
+- caso_relacionado: como mucho uno, y solo de los casos de referencia.
 - Escribí en el idioma del formulario (español o portugués)."""
 
 

@@ -2,7 +2,7 @@
 
 Conversational intake agent for [guria.lat](https://guria.lat), an AI engineering practice serving businesses in Brazil and Latin America.
 
-A visitor describes their project in a chat widget. The agent asks follow-up questions until the problem is clear, confirms a summary, and hands off. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
+A visitor describes their project in a chat widget. The assistant asks follow-up questions until the problem is clear (what it costs today for running businesses, what is already validated for new products), confirms a summary, and tells the visitor the Guria team will reach out with a proposal and an online meeting. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
 
 The chat works in Spanish and Portuguese.
 
@@ -24,7 +24,7 @@ browser widget ──POST /api/chat──▶ FastAPI ──▶ chat agent (LangC
 
 **Two parts with different jobs.** Conversation is open-ended, so it is an agent. Drafting is a known process, so it is a fixed graph where the model only works inside nodes (`triage`, `redactar`) and everything verifiable runs as plain code.
 
-**Rules live in code, not prompts.** `revisar` checks the draft against the declared budget, inverted ranges, and invented references, and sends it back to `redactar` at most twice. Session state, turn limits, and rate limits are enforced by the API, so a closed session never reaches the model.
+**Rules live in code, not prompts.** `revisar` rejects inverted ranges and references to projects that don't exist, and sends the draft back to `redactar` at most twice. LLM nodes retry when the model omits a required field. There is deliberately no budget check: forcing an estimate to fit the client's budget rewards dishonest numbers, so the prompt asks for the real cost plus a smaller first stage that does fit. Session state, turn limits, and rate limits are enforced by the API, so a closed session never reaches the model.
 
 **No prices to clients.** Client-facing output never includes prices or dates. Estimates exist only in the internal brief.
 
@@ -46,7 +46,7 @@ Every conversation is stored, but none of them changes the agent directly. Letti
 - **SQLite** (WAL): conversation checkpoints and session metadata
 - **TypeSafe Jev**: conversation classification with calibrated probabilities
 - **OpenAI-compatible gateway** ([9router](https://github.com/decolua/9router)): routes and falls back across model providers
-- **LangSmith**: tracing (optional)
+- **LangSmith**: tracing and LangGraph Studio during development
 
 ## Setup
 
@@ -63,7 +63,7 @@ uv run --env-file .env uvicorn api:app --port 8000
 | `ROUTER_BASE_URL`, `ROUTER_API_KEY`, `ROUTER_MODEL` | OpenAI-compatible endpoint and model for the chat and drafting |
 | `TYPESAFE_API_KEY` | Jev, for nightly classification (`TYPESAFE_MODEL` defaults to `jev-latest`) |
 | `REPORTE_WEBHOOK_URL`, `XAPI` | Weekly report webhook and the value sent in its `xapi` header |
-| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Optional tracing |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Tracing, for development only (see Privacy) |
 | `INTAKE_DB` | SQLite path (default `data/intake.db`) |
 
 ## API
@@ -101,6 +101,8 @@ Retention runs before classification and does not depend on any external service
 ## Privacy
 
 Built for LGPD. The chat widget on guria.lat tells visitors the conversation is stored, why, and for how long. Sessions that became leads are kept for 12 months and all others for 90 days. `borrar` removes a person's checkpoints, session row, and stored intake in one step.
+
+LangSmith tracing is off by default and meant for development only. Traces are a copy of the conversation stored outside this erasure flow, so production keeps a single source of truth: the local database.
 
 ## Development
 
