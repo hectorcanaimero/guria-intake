@@ -23,9 +23,9 @@ COPY *.py langgraph.json ./
 
 # Charlas, borradores y PDFs: montar un volumen persistente acá.
 VOLUME /app/data
-EXPOSE 3000
+EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health', timeout=4)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"
 
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

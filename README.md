@@ -125,12 +125,12 @@ The image bundles headless Chromium, which `deck.py` uses to print the proposal 
 
 ```bash
 docker build -t guria-intake .
-docker run -d -p 3000:3000 --env-file .env -v guria-intake-data:/app/data guria-intake
+docker run -d -p 8000:8000 --env-file .env -v guria-intake-data:/app/data guria-intake
 ```
 
 - **Data:** mount a persistent volume at `/app/data` (SQLite, intakes, proposal HTML and PDF) and back it up.
 - **Health:** `GET /health`, also used by the image's `HEALTHCHECK`.
-- **Exposure:** the API needs no public domain. Put it on the same Docker network as the site and proxy `/api/*` to it (`reverse_proxy guria-intake:3000` in Caddy).
+- **Exposure:** the API needs no public domain. Put it on the same Docker network as the site and proxy `/api/*` to it (`reverse_proxy guria-intake:8000` in Caddy).
 - **Scheduled jobs** (for example Coolify Scheduled Tasks, run inside the container):
   - `0 3 * * *` → `python mantenimiento.py`
   - `0 8 * * 1` → `python mantenimiento.py reporte --enviar`
