@@ -1,7 +1,6 @@
 """Convierte una Propuesta en slides HTML con el diseño de guria.lat, y en PDF.
 
-El modelo solo escribe el contenido (intake.Propuesta). El diseño, los datos de los
-casos y el llamado a la reunión los pone este archivo: así todas las propuestas
+El modelo solo escribe el contenido (intake.Propuesta). El diseño y el llamado a la reunión los pone este archivo: así todas las propuestas
 salen iguales y el modelo no puede romper el layout ni colar un precio.
 """
 
@@ -13,7 +12,7 @@ from datetime import date
 from html import escape
 from pathlib import Path
 
-from intake import CASOS, Propuesta
+from intake import Propuesta
 
 MESES = {
     "es": ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
@@ -27,7 +26,6 @@ TXT = {
         propuesta="Propuesta", para="Para", borrador="Borrador para conversar",
         contaste="Lo que nos contaste", cuesta="Lo que cuesta hoy",
         resuelto="Cómo se ve resuelto", resuelto_h="Un día normal, con esto andando",
-        caso="Algo parecido que ya hicimos", parecido="En qué se parece",
         etapas="Cómo trabajaríamos", etapas_h="Por etapas, para aprender antes de invertir más",
         etapa="Etapa", aca="Empezamos acá", falta="Lo que falta definir",
         falta_h="Tres preguntas para la reunión",
@@ -40,7 +38,6 @@ TXT = {
         propuesta="Proposta", para="Para", borrador="Rascunho para conversar",
         contaste="O que você nos contou", cuesta="Quanto isso custa hoje",
         resuelto="Como fica resolvido", resuelto_h="Um dia normal, com isso funcionando",
-        caso="Algo parecido que já fizemos", parecido="Onde se parece",
         etapas="Como trabalharíamos", etapas_h="Por etapas, para aprender antes de investir mais",
         etapa="Etapa", aca="Começamos aqui", falta="O que falta definir",
         falta_h="Três perguntas para a reunião",
@@ -117,11 +114,6 @@ h3 { font-size: 28px; font-weight: 600; line-height: 1.15; letter-spacing: -.02e
 .etapa li::before { content: "· "; color: var(--signal-text); }
 .aca { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
   color: var(--signal-text); }
-.caso { display: grid; grid-template-columns: 1fr 380px; gap: 56px; }
-.caso p { font-size: 26px; line-height: 1.5; color: var(--body-dark); font-weight: 300; }
-.stack { font-family: var(--mono); font-size: 14px; letter-spacing: .04em; color: var(--muted-dark); }
-.porque { border-left: 1px solid var(--rule-dark); padding-left: 28px; display: flex; flex-direction: column; gap: 12px; }
-.porque p { color: var(--paper); font-size: 24px; }
 .preguntas { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
 .preguntas li { list-style: none; display: grid; grid-template-columns: 72px 1fr; padding: 28px 0;
   border-bottom: 1px solid var(--rule); align-items: baseline; }
@@ -144,7 +136,6 @@ def render(p: Propuesta, agenda_url: str, hoy: date | None = None) -> str:
     t, e = TXT[p.idioma], escape
     hoy = hoy or date.today()
     fecha = f"{hoy.day} de {MESES[p.idioma][hoy.month - 1]} de {hoy.year}"
-    caso = next((c for c in CASOS if c["nombre"] == p.caso), None)  # datos reales, no del modelo
 
     secciones: list[tuple[str, str, str]] = []  # (clase, título de sección, cuerpo)
     cuerpo = f'<p class="quote">{e(p.lo_que_nos_contaste)}</p>'
@@ -155,14 +146,6 @@ def render(p: Propuesta, agenda_url: str, hoy: date | None = None) -> str:
     items = "".join(f'<div><span class="n">{i:02d}</span><p class="item">{e(x)}</p></div>'
                     for i, x in enumerate(p.como_se_ve_resuelto[:4], 1))
     secciones.append(("", t["resuelto"], f'<h2>{t["resuelto_h"]}</h2><div class="grid cols2">{items}</div>'))
-
-    if caso:
-        porque = (f'<div class="porque"><p class="kicker">{t["parecido"]}</p><p>{e(p.por_que_el_caso)}</p></div>'
-                  if p.por_que_el_caso else "<div></div>")
-        secciones.append(("dark", t["caso"],
-                          f'<div class="caso"><div style="display:flex;flex-direction:column;gap:20px">'
-                          f'<h2>{e(caso["nombre"])}</h2><p>{e(caso["objetivo"])}</p>'
-                          f'<p class="stack">{e(caso["stack"])}</p></div>{porque}</div>'))
 
     etapas = p.etapas[:3]
     cols = "".join(

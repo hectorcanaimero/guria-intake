@@ -42,10 +42,10 @@ def texto_intake(thread_id: str, registro: dict) -> str:
     lineas = [  # *negrita* y _cursiva_ son el formato de WhatsApp
         f"*Nuevo intake* · {p['titulo'] if p else f['tipo']}",
         f"{f['nombre']}" + (f" · {f['empresa']}" if f.get("empresa") else "") + f" · {f['email']}",
-        f"Tipo: {f['tipo']} · Presupuesto: {f['presupuesto']} · Plazo: {f['plazo']}",
+        f"Tipo: {f['tipo']} · Plazo: {f['plazo']}",
     ]
     if b:
-        lineas.append(f"Encaja: *{'sí' if b['encaja'] else 'no'}*")
+        lineas.append(f"Encaja: *{'sí' if b['encaja'] else 'no'}* · {b.get('viabilidad', '')}")
         lineas += ["", recortar(b["nota_interna"])]
     else:
         lineas += ["", "Datos insuficientes para proponer. Preguntas para el cliente:"]

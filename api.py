@@ -1,9 +1,12 @@
 """API del widget de chat: cada mensaje del navegador entra por /api/chat."""
 
+import json
 import time
 from collections import defaultdict, deque
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
 import db
@@ -44,8 +47,8 @@ def health() -> dict:
     return {"ok": True}
 
 
-@app.post("/api/chat")
-def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Salida:
+def abrir_turno(entrada: Entrada, request: Request) -> Salida | None:
+    """Límites y estado de la sesión. Devuelve la respuesta fija si la sesión no llega al modelo."""
     # Detrás de Caddy, la IP real llega en X-Forwarded-For.
     ip = request.headers.get("x-forwarded-for", request.client.host).split(",")[0].strip()
     limitar(ip)
@@ -58,10 +61,47 @@ def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Sal
     if sesion["turnos"] > MAX_TURNOS:
         db.marcar(entrada.thread_id, "cerrada")
         return Salida(respuesta="Llegamos al límite de esta charla: escribime por email y seguimos. · Chegamos ao limite desta conversa: me escreva por e-mail e seguimos.", terminado=True)
+    return None
 
-    config = {"configurable": {"thread_id": entrada.thread_id}}
-    r = chat.invoke({"messages": [{"role": "user", "content": entrada.mensaje}]}, config)
-    nuevo = db.estado(entrada.thread_id)
+
+def cerrar_turno(thread_id: str, tasks: BackgroundTasks) -> bool:
+    nuevo = db.estado(thread_id)
     if nuevo == "enviada":  # enviar_intake corrió en este turno: arranca el borrador en segundo plano
-        tasks.add_task(completar_borrador, archivo(entrada.thread_id), graph)
-    return Salida(respuesta=r["messages"][-1].text, terminado=nuevo != "abierta")
+        tasks.add_task(completar_borrador, archivo(thread_id), graph)
+    return nuevo != "abierta"
+
+
+def _entrada(entrada: Entrada) -> tuple[dict, dict]:
+    return {"messages": [{"role": "user", "content": entrada.mensaje}]}, {"configurable": {"thread_id": entrada.thread_id}}
+
+
+@app.post("/api/chat")
+def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Salida:
+    if fija := abrir_turno(entrada, request):
+        return fija
+    r = chat.invoke(*_entrada(entrada))
+    return Salida(respuesta=r["messages"][-1].text, terminado=cerrar_turno(entrada.thread_id, tasks))
+
+
+@app.post("/api/chat/stream")
+def conversar_en_vivo(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> StreamingResponse:
+    """Igual que /api/chat, pero en NDJSON: {"t": "..."} por fragmento y {"fin": true, "terminado": ...} al final."""
+    fija = abrir_turno(entrada, request)  # el 429 sale antes de empezar a transmitir
+
+    def lineas():
+        linea = lambda d: json.dumps(d, ensure_ascii=False) + "\n"
+        if fija:
+            yield linea({"t": fija.respuesta})
+            yield linea({"fin": True, "terminado": True})
+            return
+        ultimo = None
+        for chunk, meta in chat.stream(*_entrada(entrada), stream_mode="messages"):
+            if meta.get("langgraph_node") != "model" or not isinstance(chunk, AIMessage) or not chunk.text:
+                continue
+            if ultimo and chunk.id != ultimo:  # otro mensaje del modelo (antes y después de una tool)
+                yield linea({"t": "\n\n"})
+            ultimo = chunk.id
+            yield linea({"t": chunk.text})
+        yield linea({"fin": True, "terminado": cerrar_turno(entrada.thread_id, tasks)})
+
+    return StreamingResponse(lineas(), media_type="application/x-ndjson", headers={"X-Accel-Buffering": "no"})

@@ -19,17 +19,21 @@ browser widget ──POST /api/chat──▶ FastAPI ──▶ chat agent (LangC
                                                           ▼
                      drafting workflow (LangGraph StateGraph)
                      evaluar → triage ─(vague)─▶ pedir_datos
-                                      └(clear)─▶ buscar → redactar ⇄ revisar → componer ⇄ revisar_propuesta
+                                      └(clear)─▶ buscar ─┬▶ redactar ⇄ revisar ─(fit)─▶ componer ⇄ revisar_propuesta
+                                                         └▶ marketing   (runs in parallel with redactar)
                                                           │
-                     deck.py: proposal → HTML slides → PDF (headless Chromium)
-                     avisos.py: summary + PDF → n8n webhook → WhatsApp
+                     interno.py: internal brief → A4 PDF (headless Chromium)
+                     deck.py: proposal → HTML slides → PDF
+                     avisos.py: summary + internal PDF, then proposal PDF → n8n webhook → WhatsApp
 ```
 
-**Two parts with different jobs.** Conversation is open-ended, so it is an agent. Drafting is a known process, so it is a fixed graph where the model only works inside nodes (`triage`, `redactar`) and everything verifiable runs as plain code.
+**Two parts with different jobs.** Conversation is open-ended, so it is an agent. Drafting is a known process, so it is a fixed graph where the model only works inside nodes (`triage`, `redactar`, `marketing`, `componer`) and everything verifiable runs as plain code.
 
-**Rules live in code, not prompts.** `revisar` rejects inverted ranges and references to projects that don't exist, and sends the draft back to `redactar` at most twice. LLM nodes retry when the model omits a required field. There is deliberately no budget check: forcing an estimate to fit the client's budget rewards dishonest numbers, so the prompt asks for the real cost plus a smaller first stage that does fit. Session state, turn limits, and rate limits are enforced by the API, so a closed session never reaches the model.
+**Two internal views, one call each.** `redactar` acts as a product owner with technical judgment: a viability verdict, what to reuse before building, what depends on the client, and the hypothesis and metric the first stage tests. It deliberately does not write a spec. `marketing` reads the intake as a buyer: real pain, motivations, likely objections, and the angle that `componer` uses to order the proposal. It needs only the intake, so it fans out from `buscar` and runs alongside `redactar`.
 
-**No prices to clients.** The internal brief (`Borrador`) carries effort and cost ranges; the client proposal (`Propuesta`) is a separate schema with no price or date fields at all, and `revisar_propuesta` rejects any currency, duration, em dash, or invented reference project before it is rendered. The deck's only call to action is booking a 30-minute online meeting.
+**Rules live in code, not prompts.** `revisar` rejects inverted ranges, references to projects that don't exist, and a "not viable" verdict marked as a fit, and sends the draft back to `redactar` at most twice. If the brief says the project is not a fit, no proposal is composed: the team gets the brief and decides. The client deck never cites past projects. LLM nodes retry when the model omits a required field. The assistant never asks about budget: a declared budget anchors the estimate, so money is discussed only in the meeting. Session state, turn limits, and rate limits are enforced by the API, so a closed session never reaches the model.
+
+**No prices to clients.** The internal brief (`Borrador`) carries effort as hours per deliverable; code turns them into cost and weeks with the team's rate (`TARIFA_USD_HORA`, `HORAS_SEMANA`), so the model never sets a price; the client proposal (`Propuesta`) is a separate schema with no price or date fields at all, and `revisar_propuesta` rejects any currency, duration, em dash, or pressure tactic (fake scarcity, limited-time offers) before it is rendered. The deck's only call to action is booking a 30-minute online meeting.
 
 **Content from the model, design from code.** The model fills a fixed schema; `deck.py` owns layout, typography, and color, and pulls reference-project details from the real project list. Every proposal looks the same and the model cannot break the layout.
 
@@ -164,5 +168,6 @@ Tests cover session memory across restarts, intake validation, closing abusive s
 | `api.py` | HTTP endpoint, limits, background drafting |
 | `db.py` | SQLite connection, checkpointer, session table |
 | `mantenimiento.py` | Classification, retention, reporting, erasure |
+| `interno.py` | Internal brief as an A4 document and PDF |
 | `deck.py` | Proposal slides (HTML, guria.lat design) and PDF export |
 | `avisos.py` | Team notifications through the webhook |

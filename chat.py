@@ -20,7 +20,6 @@ from grafo import _modelo
 BORRADORES = db.DB.parent / "borradores"  # junto a la base: un solo volumen en producción
 
 Tipo = Literal["producto", "agentes", "whatsapp", "showly", "infra", "otro"]
-Presupuesto = Literal["Menos de USD 2.000", "USD 2.000 a 5.000", "USD 5.000 a 15.000", "Más de USD 15.000", "Todavía no sé"]
 Plazo = Literal["Esta semana", "Este mes", "Próximos 3 meses", "Sin apuro"]
 
 
@@ -34,7 +33,6 @@ def enviar_intake(
     email: str,
     tipo: Tipo,
     descripcion: str,
-    presupuesto: Presupuesto,
     plazo: Plazo,
     runtime: ToolRuntime,
     empresa: str = "",
@@ -54,7 +52,7 @@ def enviar_intake(
 
     BORRADORES.mkdir(exist_ok=True)
     formulario = dict(nombre=nombre, email=email, empresa=empresa, tipo=tipo,
-                      descripcion=descripcion, presupuesto=presupuesto, plazo=plazo)
+                      descripcion=descripcion, plazo=plazo)
     destino.write_text(json.dumps({"formulario": formulario}, ensure_ascii=False, indent=2))
     db.marcar(thread_id, "enviada", email)
     return ("Enviado. Despedite: el equipo de Guria se va a poner en contacto por email con "
@@ -77,7 +75,7 @@ Tu trabajo es charlar con un posible cliente y juntar lo necesario para que el e
 de Guria le prepare una propuesta:
 - nombre y email (empresa es opcional)
 - qué problema tiene: qué pasa hoy, a quién le duele, qué querría que pase
-- tipo de proyecto, presupuesto aproximado y plazo
+- tipo de proyecto y plazo
 
 Qué más preguntar según el caso (una vez, sin insistir):
 - Negocio que ya funciona: cuánto le cuesta hoy el problema (volumen, horas, plata o \
@@ -89,7 +87,7 @@ Cómo conversar:
 - Una o dos preguntas por mensaje, cortas. Nada de listas largas ni formularios.
 - Texto plano: sin markdown, sin asteriscos ni viñetas con símbolos. El widget no lo renderiza.
 - Si el problema es vago, repreguntá hasta entenderlo. Eso vale más que cualquier otro dato.
-- Presupuesto, plazo y tipo los mapeás vos a las opciones de la tool; preguntá en lenguaje natural.
+- Plazo y tipo los mapeás vos a las opciones de la tool; preguntá en lenguaje natural.
 - Respondé en el idioma del cliente (español o portugués).
 - Antes de enviar, mostrá un resumen breve y pedí confirmación. Después llamá a enviar_intake.
 - Al despedirte, decí que el equipo de Guria se va a poner en contacto por email con una
@@ -97,6 +95,8 @@ Cómo conversar:
 
 Límites:
 - No des precios, plazos ni compromisos: eso se define en la reunión con el equipo.
+- Nunca preguntes por presupuesto ni por plata. Si el cliente lo saca, decile que eso se
+  habla en la reunión y seguí con su problema.
 - No te presentes como una persona ni nombres a nadie del equipo: sos el asistente de guria.lat.
 - Si preguntan algo fuera del intake, respondé en una línea y volvé al tema.
 - Si te piden un chiste o bromean, podés seguirles con humor breve (una línea) y volvé al tema.
