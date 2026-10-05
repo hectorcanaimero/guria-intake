@@ -1,13 +1,14 @@
-"""Avisos al equipo por el webhook de n8n (que los reenvía por WhatsApp).
+"""Avisos al equipo.
 
-Todos los payloads llevan `tipo` y `text`; las propuestas además llevan el PDF en
-base64 en `archivo`, listo para el sendMedia de Evolution API.
+- Cada intake llega por email, con el documento interno y la propuesta adjuntos.
+- El reporte semanal sigue por el webhook de n8n (que lo reenvía por WhatsApp).
 """
 
-import base64
 import json
 import os
+import smtplib
 import urllib.request
+from email.message import EmailMessage
 from pathlib import Path
 
 
@@ -22,10 +23,26 @@ def enviar(payload: dict) -> None:
             raise RuntimeError(f"El webhook respondió {r.status}")
 
 
-def adjunto(pdf: Path, caption: str = "") -> dict:
-    # caption: pie corto para el documento (WhatsApp corta los pies largos); el detalle va en `text`.
-    return {"nombre": pdf.name, "mimetype": "application/pdf", "caption": caption,
-            "base64": base64.b64encode(pdf.read_bytes()).decode()}
+def email(asunto: str, texto: str, adjuntos: list[Path]) -> None:
+    """Manda un mail por SMTP (stdlib). Puerto 465 = SSL directo; cualquier otro, STARTTLS."""
+    falta = [v for v in ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_FROM", "AVISOS_EMAIL") if not os.environ.get(v)]
+    if falta:
+        raise RuntimeError(f"Faltan {', '.join(falta)} en .env")
+    msg = EmailMessage()
+    msg["Subject"], msg["To"] = asunto, os.environ["AVISOS_EMAIL"]
+    msg["From"] = os.environ["SMTP_FROM"]  # en Resend, de un dominio verificado
+    msg.set_content(texto)
+    for f in adjuntos:
+        tipo = ("application", "pdf") if f.suffix == ".pdf" else ("text", "html")
+        msg.add_attachment(f.read_bytes(), maintype=tipo[0], subtype=tipo[1], filename=f.name)
+
+    host, puerto = os.environ["SMTP_HOST"], int(os.environ.get("SMTP_PORT", "465"))
+    conexion = smtplib.SMTP_SSL if puerto == 465 else smtplib.SMTP
+    with conexion(host, puerto, timeout=30) as s:
+        if puerto != 465:
+            s.starttls()
+        s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+        s.send_message(msg)
 
 
 def recortar(texto: str, limite: int = 600) -> str:
@@ -37,20 +54,22 @@ def recortar(texto: str, limite: int = 600) -> str:
 
 
 def texto_intake(thread_id: str, registro: dict) -> str:
-    """El mensaje de WhatsApp: lo justo para decidir sin abrir nada."""
+    """El cuerpo del mail: lo justo para decidir sin abrir los adjuntos."""
     f, b, p = registro["formulario"], registro.get("borrador"), registro.get("propuesta")
-    lineas = [  # *negrita* y _cursiva_ son el formato de WhatsApp
-        f"*Nuevo intake* · {p['titulo'] if p else f['tipo']}",
+    lineas = [
+        f"Nuevo intake · {p['titulo'] if p else f['tipo']}",
         f"{f['nombre']}" + (f" · {f['empresa']}" if f.get("empresa") else "") + f" · {f['email']}",
         f"Tipo: {f['tipo']} · Plazo: {f['plazo']}",
     ]
     if b:
-        lineas.append(f"Encaja: *{'sí' if b['encaja'] else 'no'}* · {b.get('viabilidad', '')}")
+        lineas.append(f"Encaja: {'sí' if b['encaja'] else 'no'} · {b.get('viabilidad', '')}")
         lineas += ["", recortar(b["nota_interna"])]
     else:
         lineas += ["", "Datos insuficientes para proponer. Preguntas para el cliente:"]
         lineas += [f"· {q}" for q in registro.get("preguntas", [])[:5]]
     if registro.get("error"):
         lineas += ["", f"Error al redactar: {registro['error'][:200]}"]
-    lineas += ["", f"_Sesión {thread_id}_"]
+    if p:
+        lineas += ["", "Adjuntos: el documento interno (no reenviar) y la propuesta para el cliente (revisala antes de reenviarla)."]
+    lineas += ["", f"Sesión {thread_id}"]
     return "\n".join(lineas)

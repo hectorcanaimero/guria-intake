@@ -27,7 +27,7 @@ TXT = {
         contaste="Lo que nos contaste", cuesta="Lo que cuesta hoy",
         resuelto="Cómo se ve resuelto", resuelto_h="Un día normal, con esto andando",
         etapas="Cómo trabajaríamos", etapas_h="Por etapas, para aprender antes de invertir más",
-        etapa="Etapa", aca="Empezamos acá", falta="Lo que falta definir",
+        etapa="Etapa", aca="Empezamos aquí", falta="Lo que falta definir",
         falta_h="Tres preguntas para la reunión",
         cta_h="Agendemos 30 minutos",
         cta_p="Este documento es un borrador. En una reunión online lo ajustamos juntos "

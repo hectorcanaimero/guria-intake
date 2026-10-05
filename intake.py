@@ -166,7 +166,7 @@ que el cliente quiera agendar una reunión online de 30 minutos para ajustarla j
 
 Reglas de escritura (obligatorias):
 - Si te paso un ángulo, usalo para ordenar el relato, sin nombrarlo ni exagerarlo.
-- Español rioplatense con voseo, o portugués de Brasil si el cliente escribió en portugués.
+- Español neutro de Latinoamérica tuteando (tú, nunca voseo), o portugués de Brasil si el cliente escribió en portugués.
 - Frases cortas, sujeto y verbo. Nada de "soluciones innovadoras", "transformación digital" \
 ni frases intercambiables entre empresas.
 - Nunca uses guión largo. Usá dos puntos, coma o punto.

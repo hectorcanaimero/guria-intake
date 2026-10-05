@@ -2,7 +2,7 @@
 
 Conversational intake agent for [guria.lat](https://guria.lat), an AI engineering practice serving businesses in Brazil and Latin America.
 
-A visitor describes their project in a chat widget. The assistant asks follow-up questions until the problem is clear (what it costs today for running businesses, what is already validated for new products), confirms a summary, and tells the visitor the Guria team will reach out with a proposal and an online meeting. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. It also writes the client-facing proposal: a slide deck in guria.lat's visual identity, exported to PDF and sent to the team on WhatsApp for review. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
+A visitor describes their project in a chat widget. The assistant asks follow-up questions until the problem is clear (what it costs today for running businesses, what is already validated for new products), confirms a summary, and tells the visitor the Guria team will reach out with a proposal and an online meeting. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. It also writes the client-facing proposal: a slide deck in guria.lat's visual identity, exported to PDF and emailed to the team for review. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
 
 The chat works in Spanish and Portuguese.
 
@@ -24,7 +24,7 @@ browser widget ──POST /api/chat──▶ FastAPI ──▶ chat agent (LangC
                                                           │
                      interno.py: internal brief → A4 PDF (headless Chromium)
                      deck.py: proposal → HTML slides → PDF
-                     avisos.py: summary + internal PDF, then proposal PDF → n8n webhook → WhatsApp
+                     avisos.py: one email (SMTP) with the internal PDF and the proposal PDF
 ```
 
 **Two parts with different jobs.** Conversation is open-ended, so it is an agent. Drafting is a known process, so it is a fixed graph where the model only works inside nodes (`triage`, `redactar`, `marketing`, `componer`) and everything verifiable runs as plain code.
@@ -73,7 +73,9 @@ PDF export needs Chromium. In development it is auto-detected (system Chromium o
 |---|---|
 | `ROUTER_BASE_URL`, `ROUTER_API_KEY`, `ROUTER_MODEL` | OpenAI-compatible endpoint and model for the chat and drafting |
 | `TYPESAFE_API_KEY` | Jev, for nightly classification (`TYPESAFE_MODEL` defaults to `jev-latest`) |
-| `REPORTE_WEBHOOK_URL`, `XAPI` | Team webhook (new intakes with the PDF, weekly report) and the value sent in its `xapi` header |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Outgoing mail for intake notices (port 465 = SSL, otherwise STARTTLS) |
+| `AVISOS_EMAIL` | Where intake notices go |
+| `REPORTE_WEBHOOK_URL`, `XAPI` | Weekly report webhook and the value sent in its `xapi` header |
 | `AGENDA_URL` | Booking link shown on the proposal's last slide |
 | `CHROMIUM_BIN` | Optional path to Chromium for PDF export (auto-detected otherwise) |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Tracing, for development only (see Privacy) |
@@ -95,15 +97,9 @@ The client generates `thread_id` once per session (8–64 characters, `[A-Za-z0-
 
 ## Notifications
 
-Every finished intake posts to `REPORTE_WEBHOOK_URL` with the `xapi` header:
+Every finished intake sends one email to `AVISOS_EMAIL` over SMTP (Python's `smtplib`, no extra dependency): a short summary in the body, the internal brief (`<thread_id>.interno.pdf`, not to be forwarded) and the client proposal (`<thread_id>.pdf`) attached. Without Chromium the HTML versions are attached instead.
 
-```json
-{ "tipo": "nuevo_intake",
-  "text": "Nuevo intake · Confirmación de turnos por WhatsApp\nMarina · Clínica Sorriso · …",
-  "archivo": { "nombre": "<thread_id>.pdf", "mimetype": "application/pdf", "base64": "…" } }
-```
-
-The weekly report uses the same webhook with `"tipo": "reporte"`. In production an n8n flow forwards both to WhatsApp (Evolution API `sendMedia` for the PDF). A failed notification never loses data: the intake, brief, and deck are written to disk first.
+The weekly report posts to `REPORTE_WEBHOOK_URL` with the `xapi` header and `"tipo": "reporte"`; in production an n8n flow forwards it to WhatsApp. A failed notification never loses data: the intake, brief, and deck are written to disk first.
 
 ## Operations
 
@@ -170,4 +166,4 @@ Tests cover session memory across restarts, intake validation, closing abusive s
 | `mantenimiento.py` | Classification, retention, reporting, erasure |
 | `interno.py` | Internal brief as an A4 document and PDF |
 | `deck.py` | Proposal slides (HTML, guria.lat design) and PDF export |
-| `avisos.py` | Team notifications through the webhook |
+| `avisos.py` | Intake email (SMTP) and weekly report webhook |

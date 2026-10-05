@@ -241,11 +241,11 @@ def procesar(formulario: dict, graph=None) -> dict:
     return resumir((graph or build_graph()).invoke({"formulario": formulario}))
 
 
-def _documento(html: str, carpeta: Path, nombre: str) -> Path | None:
-    """Guarda nombre.html y lo pasa a nombre.pdf. None si no hay Chromium."""
+def _documento(html: str, carpeta: Path, nombre: str) -> Path:
+    """Guarda nombre.html y lo pasa a nombre.pdf. Sin Chromium, devuelve el HTML."""
     ruta, pdf = carpeta / f"{nombre}.html", carpeta / f"{nombre}.pdf"
     ruta.write_text(html)
-    return pdf if deck.a_pdf(ruta, pdf) else None
+    return pdf if deck.a_pdf(ruta, pdf) else ruta
 
 
 def completar_borrador(destino: Path, graph=None) -> None:
@@ -260,29 +260,24 @@ def completar_borrador(destino: Path, graph=None) -> None:
         log.exception("intake: falló el grafo")
         registro["error"] = repr(e)
 
-    pdf_interno = pdf_propuesta = None
+    adjuntos = []
     try:
         if registro.get("borrador"):  # lead.interno.html/.pdf: borrar() los encuentra con lead.*
-            pdf_interno = _documento(interno.render(destino.stem, registro), destino.parent, f"{destino.stem}.interno")
+            adjuntos.append(_documento(interno.render(destino.stem, registro), destino.parent, f"{destino.stem}.interno"))
         if registro.get("propuesta"):
             html = deck.render(Propuesta(**registro["propuesta"]), os.environ.get("AGENDA_URL", "[TU LINK DE AGENDA]"))
-            pdf_propuesta = _documento(html, destino.parent, destino.stem)
+            adjuntos.append(_documento(html, destino.parent, destino.stem))
     except Exception as e:
         log.exception("intake: fallaron los documentos")
         registro["error"] = registro["error"] or f"documentos: {e!r}"
     destino.write_text(json.dumps(registro, ensure_ascii=False, indent=2))
 
-    try:  # los avisos van últimos: si el webhook falla, todo lo anterior ya está guardado
-        payload = {"tipo": "nuevo_intake", "text": avisos.texto_intake(destino.stem, registro)}
-        if pdf_interno:
-            payload["archivo"] = avisos.adjunto(pdf_interno, "Interno · no reenviar")
-        avisos.enviar(payload)
-        if pdf_propuesta:  # mensaje aparte: este PDF es el que se reenvía al cliente
-            titulo = registro["propuesta"]["titulo"]
-            avisos.enviar({"tipo": "nuevo_intake", "text": f"*Propuesta para el cliente* · {titulo}\nRevisala antes de reenviarla.",
-                           "archivo": avisos.adjunto(pdf_propuesta, f"Propuesta · {titulo}")})
+    try:  # el aviso va último: si el mail falla, todo lo anterior ya está guardado
+        f, p = registro["formulario"], registro.get("propuesta")
+        asunto = f"Nuevo intake · {p['titulo'] if p else f['tipo']} · {f['nombre']}"
+        avisos.email(asunto, avisos.texto_intake(destino.stem, registro), adjuntos)
     except Exception:
-        log.exception("intake: no se pudo avisar por el webhook")
+        log.exception("intake: no se pudo mandar el mail")
 
 
 if __name__ == "__main__":

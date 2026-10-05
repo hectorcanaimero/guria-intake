@@ -38,7 +38,7 @@ def limitar(ip: str) -> None:
     while q and q[0] < ahora - 3600:
         q.popleft()
     if len(q) >= MAX_POR_HORA:
-        raise HTTPException(429, "Demasiados mensajes. Probá de nuevo en un rato. · Muitas mensagens. Tente de novo mais tarde.")
+        raise HTTPException(429, "Demasiados mensajes. Intenta de nuevo en un rato. · Muitas mensagens. Tente de novo mais tarde.")
     q.append(ahora)
 
 
@@ -57,10 +57,10 @@ def abrir_turno(entrada: Entrada, request: Request) -> Salida | None:
     if sesion["estado"] == "enviada":
         return Salida(respuesta="Ya recibí tu proyecto: el equipo de Guria se va a poner en contacto por email. · Já recebi seu projeto: a equipe da Guria vai entrar em contato por e-mail.", terminado=True)
     if sesion["estado"] == "cerrada":
-        return Salida(respuesta="Esta charla terminó. Si tenés un proyecto, abrí una nueva cuando quieras. · Esta conversa terminou. Se tiver um projeto, abra uma nova quando quiser.", terminado=True)
+        return Salida(respuesta="Esta conversación terminó. Si tienes un proyecto, abre una nueva cuando quieras. · Esta conversa terminou. Se tiver um projeto, abra uma nova quando quiser.", terminado=True)
     if sesion["turnos"] > MAX_TURNOS:
         db.marcar(entrada.thread_id, "cerrada")
-        return Salida(respuesta="Llegamos al límite de esta charla: escribime por email y seguimos. · Chegamos ao limite desta conversa: me escreva por e-mail e seguimos.", terminado=True)
+        return Salida(respuesta="Llegamos al límite de esta conversación: escríbeme por email y seguimos. · Chegamos ao limite desta conversa: me escreva por e-mail e seguimos.", terminado=True)
     return None
 
 
