@@ -1,5 +1,7 @@
-"""Dominio del intake: casos de referencia, reglas de encaje, el esquema del
-borrador interno y el prompt con el que se redacta."""
+"""Dominio del intake: casos de referencia, reglas de encaje, el borrador interno,
+la propuesta para el cliente y los prompts con que se escriben."""
+
+from typing import Literal
 
 from langchain.tools import tool
 from pydantic import BaseModel, Field
@@ -90,3 +92,45 @@ EJEMPLO = {
     "presupuesto": "USD 2.000 a 5.000",
     "plazo": "Este mes",
 }
+
+
+# ── Propuesta para el cliente ────────────────────────────────────────────────
+# Esquema distinto del Borrador a propósito: acá no existe ningún campo de precio
+# ni de plazo, así que el modelo no tiene dónde poner uno.
+
+class Etapa(BaseModel):
+    nombre: str = Field(description="Nombre de la etapa en 2 a 5 palabras, por ejemplo 'Validar con 20 prestadores'.")
+    objetivo: str = Field(description="Qué se aprende o se logra al terminarla, en una frase.")
+    incluye: list[str] = Field(description="Dos o tres entregables concretos, de hasta 8 palabras cada uno.")
+
+
+class Propuesta(BaseModel):
+    idioma: Literal["es", "pt"] = Field(description="Idioma del cliente.")
+    titulo: str = Field(description="Nombre del proyecto en 2 a 6 palabras, sin adjetivos de marketing.")
+    para: str = Field(description="Nombre del cliente y, si la hay, su empresa.")
+    lo_que_nos_contaste: str = Field(description="El problema con las palabras del cliente, 2 a 4 frases.")
+    costo_hoy: str | None = Field(None, description="Lo que le cuesta hoy el problema, SOLO con números que dio el cliente. Null si no dio ninguno.")
+    como_se_ve_resuelto: list[str] = Field(description="Tres o cuatro frases sobre un día normal con el problema resuelto.")
+    caso: str | None = Field(None, description="Nombre EXACTO de un caso de referencia que se parezca de verdad, o null.")
+    por_que_el_caso: str | None = Field(None, description="Una frase: en qué se parece ese caso al del cliente.")
+    etapas: list[Etapa] = Field(description="Dos o tres etapas. La primera, chica y alcanzable con su presupuesto.")
+    lo_que_falta_definir: list[str] = Field(description="Las tres preguntas que más cambian el alcance, para la reunión.")
+
+
+SYSTEM_PROPUESTA = """Escribís la propuesta que guria.lat le va a mostrar a un posible cliente, \
+a partir de su intake y del borrador interno del equipo. El objetivo de la propuesta es \
+que el cliente quiera agendar una reunión online de 30 minutos para ajustarla juntos.
+
+Reglas de escritura (obligatorias):
+- Español rioplatense con voseo, o portugués de Brasil si el cliente escribió en portugués.
+- Frases cortas, sujeto y verbo. Nada de "soluciones innovadoras", "transformación digital" \
+ni frases intercambiables entre empresas.
+- Nunca uses guión largo. Usá dos puntos, coma o punto.
+- Nunca inventes métricas, clientes, testimonios ni fechas.
+- Ningún precio, monto, moneda ni plazo en semanas, meses o días: eso se define en la reunión.
+- lo_que_nos_contaste usa las palabras del cliente, no las tuyas.
+- costo_hoy solo si el cliente dio números; si no, null.
+- Las etapas no prometen resultados: dicen qué se construye y qué se aprende. Si el \
+borrador interno dice que el presupuesto no alcanza, la primera etapa es la chica que sí entra.
+- caso: solo uno de los casos de referencia que te paso, con su nombre exacto, y solo si se \
+parece de verdad. Si ninguno se parece, null."""

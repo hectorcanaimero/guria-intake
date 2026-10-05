@@ -2,7 +2,7 @@
 
 Conversational intake agent for [guria.lat](https://guria.lat), an AI engineering practice serving businesses in Brazil and Latin America.
 
-A visitor describes their project in a chat widget. The assistant asks follow-up questions until the problem is clear (what it costs today for running businesses, what is already validated for new products), confirms a summary, and tells the visitor the Guria team will reach out with a proposal and an online meeting. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
+A visitor describes their project in a chat widget. The assistant asks follow-up questions until the problem is clear (what it costs today for running businesses, what is already validated for new products), confirms a summary, and tells the visitor the Guria team will reach out with a proposal and an online meeting. A LangGraph workflow then drafts an internal brief (scope, risks, effort range, open questions, related past work) for review before anyone replies. It also writes the client-facing proposal: a slide deck in guria.lat's visual identity, exported to PDF and sent to the team on WhatsApp for review. Conversations are persisted, classified nightly, and summarized in a weekly report, so the agent improves through reviewed changes rather than learning from raw chat input.
 
 The chat works in Spanish and Portuguese.
 
@@ -19,14 +19,19 @@ browser widget ──POST /api/chat──▶ FastAPI ──▶ chat agent (LangC
                                                           ▼
                      drafting workflow (LangGraph StateGraph)
                      evaluar → triage ─(vague)─▶ pedir_datos
-                                      └(clear)─▶ buscar → redactar ⇄ revisar
+                                      └(clear)─▶ buscar → redactar ⇄ revisar → componer ⇄ revisar_propuesta
+                                                          │
+                     deck.py: proposal → HTML slides → PDF (headless Chromium)
+                     avisos.py: summary + PDF → n8n webhook → WhatsApp
 ```
 
 **Two parts with different jobs.** Conversation is open-ended, so it is an agent. Drafting is a known process, so it is a fixed graph where the model only works inside nodes (`triage`, `redactar`) and everything verifiable runs as plain code.
 
 **Rules live in code, not prompts.** `revisar` rejects inverted ranges and references to projects that don't exist, and sends the draft back to `redactar` at most twice. LLM nodes retry when the model omits a required field. There is deliberately no budget check: forcing an estimate to fit the client's budget rewards dishonest numbers, so the prompt asks for the real cost plus a smaller first stage that does fit. Session state, turn limits, and rate limits are enforced by the API, so a closed session never reaches the model.
 
-**No prices to clients.** Client-facing output never includes prices or dates. Estimates exist only in the internal brief.
+**No prices to clients.** The internal brief (`Borrador`) carries effort and cost ranges; the client proposal (`Propuesta`) is a separate schema with no price or date fields at all, and `revisar_propuesta` rejects any currency, duration, em dash, or invented reference project before it is rendered. The deck's only call to action is booking a 30-minute online meeting.
+
+**Content from the model, design from code.** The model fills a fixed schema; `deck.py` owns layout, typography, and color, and pulls reference-project details from the real project list. Every proposal looks the same and the model cannot break the layout.
 
 ## Learning loop
 
@@ -58,11 +63,15 @@ cp .env.example .env   # fill in the values below
 uv run --env-file .env uvicorn api:app --port 8000
 ```
 
+PDF export needs Chromium. In development it is auto-detected (system Chromium or a Playwright install); the Docker image ships its own.
+
 | Variable | Purpose |
 |---|---|
 | `ROUTER_BASE_URL`, `ROUTER_API_KEY`, `ROUTER_MODEL` | OpenAI-compatible endpoint and model for the chat and drafting |
 | `TYPESAFE_API_KEY` | Jev, for nightly classification (`TYPESAFE_MODEL` defaults to `jev-latest`) |
-| `REPORTE_WEBHOOK_URL`, `XAPI` | Weekly report webhook and the value sent in its `xapi` header |
+| `REPORTE_WEBHOOK_URL`, `XAPI` | Team webhook (new intakes with the PDF, weekly report) and the value sent in its `xapi` header |
+| `AGENDA_URL` | Booking link shown on the proposal's last slide |
+| `CHROMIUM_BIN` | Optional path to Chromium for PDF export (auto-detected otherwise) |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | Tracing, for development only (see Privacy) |
 | `INTAKE_DB` | SQLite path (default `data/intake.db`) |
 
@@ -79,6 +88,18 @@ uv run --env-file .env uvicorn api:app --port 8000
 ```
 
 The client generates `thread_id` once per session (8–64 characters, `[A-Za-z0-9-]`) and sends only the new message; history is kept server-side. When `terminado` is `true`, the session is closed. Limits: 2,000 characters per message, 30 messages per session, 60 messages per IP per hour.
+
+## Notifications
+
+Every finished intake posts to `REPORTE_WEBHOOK_URL` with the `xapi` header:
+
+```json
+{ "tipo": "nuevo_intake",
+  "text": "Nuevo intake · Confirmación de turnos por WhatsApp\nMarina · Clínica Sorriso · …",
+  "archivo": { "nombre": "<thread_id>.pdf", "mimetype": "application/pdf", "base64": "…" } }
+```
+
+The weekly report uses the same webhook with `"tipo": "reporte"`. In production an n8n flow forwards both to WhatsApp (Evolution API `sendMedia` for the PDF). A failed notification never loses data: the intake, brief, and deck are written to disk first.
 
 ## Operations
 
@@ -98,9 +119,26 @@ Suggested crontab:
 
 Retention runs before classification and does not depend on any external service.
 
+## Deploy
+
+The image bundles headless Chromium, which `deck.py` uses to print the proposal PDF.
+
+```bash
+docker build -t guria-intake .
+docker run -d -p 8000:8000 --env-file .env -v guria-intake-data:/app/data guria-intake
+```
+
+- **Data:** mount a persistent volume at `/app/data` (SQLite, intakes, proposal HTML and PDF) and back it up.
+- **Health:** `GET /health`, also used by the image's `HEALTHCHECK`.
+- **Exposure:** the API needs no public domain. Put it on the same Docker network as the site and proxy `/api/*` to it (`reverse_proxy guria-intake:8000` in Caddy).
+- **Scheduled jobs** (for example Coolify Scheduled Tasks, run inside the container):
+  - `0 3 * * *` → `python mantenimiento.py`
+  - `0 8 * * 1` → `python mantenimiento.py reporte --enviar`
+- The PDF loads the brand fonts from Google Fonts at render time, so the container needs outbound HTTPS.
+
 ## Privacy
 
-Built for LGPD. The chat widget on guria.lat tells visitors the conversation is stored, why, and for how long. Sessions that became leads are kept for 12 months and all others for 90 days. `borrar` removes a person's checkpoints, session row, and stored intake in one step.
+Built for LGPD. The chat widget on guria.lat tells visitors the conversation is stored, why, and for how long. Sessions that became leads are kept for 12 months and all others for 90 days. `borrar` removes a person's checkpoints, session row, stored intake, and generated proposal files in one step.
 
 LangSmith tracing is off by default and meant for development only. Traces are a copy of the conversation stored outside this erasure flow, so production keeps a single source of truth: the local database.
 
@@ -126,3 +164,5 @@ Tests cover session memory across restarts, intake validation, closing abusive s
 | `api.py` | HTTP endpoint, limits, background drafting |
 | `db.py` | SQLite connection, checkpointer, session table |
 | `mantenimiento.py` | Classification, retention, reporting, erasure |
+| `deck.py` | Proposal slides (HTML, guria.lat design) and PDF export |
+| `avisos.py` | Team notifications through the webhook |

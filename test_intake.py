@@ -15,12 +15,14 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 
 import api
+import avisos
+import deck
 import grafo
 import chat as chat_mod
 import db
 import mantenimiento
 from grafo import MAX_INTENTOS, Triage, despues_de_revisar, despues_de_triage, revisar
-from intake import Borrador, evaluar_encaje
+from intake import Borrador, Etapa, Propuesta, evaluar_encaje
 
 DATOS = dict(nombre="Ana", email="ana@x.com", tipo="whatsapp", descripcion="x" * 50,
              presupuesto="USD 2.000 a 5.000", plazo="Este mes")
@@ -51,7 +53,8 @@ def test_revisar_y_ciclo():
     assert len(problemas) == 2
     # con problemas vuelve a redactar, salvo que ya gastó los intentos
     assert despues_de_revisar({**estado, "problemas": problemas}) == "redactar"
-    assert despues_de_revisar({**estado, "problemas": problemas, "intentos": MAX_INTENTOS}) == "__end__"
+    # sin intentos, sigue igual hacia la propuesta: los problemas quedan anotados para el equipo
+    assert despues_de_revisar({**estado, "problemas": problemas, "intentos": MAX_INTENTOS}) == "componer"
 
 
 def test_triage_desvia_lo_vago():
@@ -73,6 +76,7 @@ def chat_falso(monkeypatch, tmp_path, respuestas):
     monkeypatch.setattr(chat_mod, "_modelo", lambda: FakeConTools(messages=guion))
     monkeypatch.setattr(api, "chat", chat_mod.build_chat())
     monkeypatch.setattr(grafo, "procesar", lambda f, g: {"borrador": {"resumen": "ok"}})
+    monkeypatch.setattr(avisos, "enviar", lambda payload: None)
     api._recientes.clear()
     return TestClient(api.app)
 
@@ -183,6 +187,55 @@ def test_redactar_reintenta_si_falta_un_campo(monkeypatch):
 
     monkeypatch.setattr(grafo, "triage", lambda e: {"triage": Triage(vaga=False, faltantes=[])})
     monkeypatch.setattr(grafo, "redactar", redactar_falso)
+    monkeypatch.setattr(grafo, "componer", lambda e: {"propuesta": propuesta(), "intentos_propuesta": 1})
     g = grafo.build_graph()
     r = grafo.procesar({**DATOS, "tipo": "whatsapp", "empresa": ""}, g)
     assert len(llamadas) == 2 and r["borrador"]["resumen"] == "r"
+
+
+def propuesta(**kw):
+    base = dict(idioma="es", titulo="Turnos por WhatsApp", para="Ana", lo_que_nos_contaste="Perdemos turnos.",
+                como_se_ve_resuelto=["El paciente confirma con un botón."], caso="Showly",
+                por_que_el_caso="Mismo problema.", lo_que_falta_definir=["¿Dónde están los turnos?"],
+                etapas=[Etapa(nombre="Piloto", objetivo="Aprender", incluye=["Recordatorio"]),
+                        Etapa(nombre="Clínica", objetivo="Escalar", incluye=["Agenda"])])
+    return Propuesta(**base | kw)
+
+
+def test_revisar_propuesta_bloquea_lo_prohibido():
+    assert grafo.revisar_propuesta({"propuesta": propuesta()})["problemas_propuesta"] == []
+    mala = propuesta(lo_que_nos_contaste="Cuesta USD 3.000 — y sale en 6 semanas.", caso="Inventado",
+                     etapas=[Etapa(nombre="Todo", objetivo="x", incluye=[])])
+    problemas = " ".join(grafo.revisar_propuesta({"propuesta": mala})["problemas_propuesta"])
+    for esperado in ("guiones largos", "precio", "plazo", "no existe", "dos o tres etapas"):
+        assert esperado in problemas
+    assert grafo.revisar_propuesta({"propuesta": propuesta(titulo="R$ 500 por mes")})["problemas_propuesta"]
+
+
+def test_deck_usa_datos_reales_y_traduce():
+    html = deck.render(propuesta(), "https://cal.com/x")
+    assert "Agenda por WhatsApp para clínicas" in html      # objetivo de Showly sale de CASOS, no del modelo
+    assert "Agendemos 30 minutos" in html and "https://cal.com/x" in html
+    assert "<script" not in deck.render(propuesta(para="<script>x</script>"), "u")  # escapa lo del modelo
+    assert "Vamos agendar 30 minutos" in deck.render(propuesta(idioma="pt"), "u")
+    assert "Algo parecido" not in deck.render(propuesta(caso=None), "u")  # sin caso, sin esa slide
+
+
+def test_completar_borrador_arma_pdf_y_avisa(tmp_path, monkeypatch):
+    destino = tmp_path / "lead-0002.json"
+    destino.write_text(json.dumps({"formulario": DATOS | {"empresa": ""}}))
+    monkeypatch.setattr(grafo, "procesar", lambda f, g: {
+        "borrador": borrador().model_dump(), "preguntas": [], "propuesta": propuesta().model_dump()})
+    enviados = []
+    monkeypatch.setattr(avisos, "enviar", enviados.append)
+    grafo.completar_borrador(destino)
+
+    assert destino.with_suffix(".html").exists()
+    [aviso] = enviados
+    assert aviso["tipo"] == "nuevo_intake" and "Turnos por WhatsApp" in aviso["text"] and "lead-0002" in aviso["text"]
+    if deck.chromium():  # en CI sin Chromium, el aviso sale sin adjunto
+        assert aviso["archivo"]["mimetype"] == "application/pdf" and destino.with_suffix(".pdf").exists()
+    # LGPD: borrar se lleva los tres archivos
+    monkeypatch.setattr(chat_mod, "BORRADORES", tmp_path)
+    mantenimiento.borrar(db.checkpointer(), "lead-0002")
+    assert not list(tmp_path.glob("lead-0002.*"))

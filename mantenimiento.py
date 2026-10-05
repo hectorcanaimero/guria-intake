@@ -14,10 +14,10 @@ import json
 import os
 import sys
 import time
-import urllib.request
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
+import avisos
 import db
 from chat import archivo
 
@@ -127,7 +127,8 @@ def clasificar(saver, jev=None) -> int:
 
 def borrar(saver, thread_id: str) -> None:
     saver.delete_thread(thread_id)
-    archivo(thread_id).unlink(missing_ok=True)
+    for f in archivo(thread_id).parent.glob(f"{thread_id}.*"):  # .json, .html y .pdf
+        f.unlink()
     db.conn().execute("DELETE FROM sesiones WHERE thread_id = ?", (thread_id,))
 
 
@@ -180,17 +181,6 @@ def reporte(dias: int = 7) -> str:
     return "\n".join(out)
 
 
-def enviar_webhook(texto: str) -> None:
-    url = os.environ.get("REPORTE_WEBHOOK_URL")
-    if not url:
-        raise SystemExit("Falta REPORTE_WEBHOOK_URL en .env")
-    headers = {"Content-Type": "application/json", "xapi": os.environ.get("XAPI", "")}  # auth del webhook de n8n
-    req = urllib.request.Request(url, data=json.dumps({"text": texto}).encode(), headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=20) as r:
-        if r.status >= 300:
-            raise SystemExit(f"El webhook respondió {r.status}")
-
-
 if __name__ == "__main__":
     saver = db.checkpointer()
     match sys.argv[1:]:
@@ -206,7 +196,7 @@ if __name__ == "__main__":
             texto = reporte(dias)
             print(texto)
             if "--enviar" in resto:
-                enviar_webhook(texto)
+                avisos.enviar({"tipo": "reporte", "text": texto})
         case ["ver", thread_id]:
             for c in conversacion(mensajes(saver, thread_id)):
                 print(f"{c['rol'].upper()}: {c.get('texto') or 'usó ' + ', '.join(c['accion'])}\n")

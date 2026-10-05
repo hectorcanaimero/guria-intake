@@ -17,7 +17,7 @@ from langchain.tools import ToolRuntime, tool
 import db
 from grafo import _modelo
 
-BORRADORES = Path("borradores")
+BORRADORES = db.DB.parent / "borradores"  # junto a la base: un solo volumen en producción
 
 Tipo = Literal["producto", "agentes", "whatsapp", "showly", "infra", "otro"]
 Presupuesto = Literal["Menos de USD 2.000", "USD 2.000 a 5.000", "USD 5.000 a 15.000", "Más de USD 15.000", "Todavía no sé"]

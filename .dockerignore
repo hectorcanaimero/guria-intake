@@ -1,0 +1,9 @@
+.venv/
+.env
+data/
+borradores/
+.git/
+.langgraph_api/
+__pycache__/
+.pytest_cache/
+test_*.py

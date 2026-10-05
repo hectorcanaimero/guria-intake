@@ -39,6 +39,11 @@ def limitar(ip: str) -> None:
     q.append(ahora)
 
 
+@app.get("/health")
+def health() -> dict:
+    return {"ok": True}
+
+
 @app.post("/api/chat")
 def conversar(entrada: Entrada, request: Request, tasks: BackgroundTasks) -> Salida:
     # Detrás de Caddy, la IP real llega en X-Forwarded-For.

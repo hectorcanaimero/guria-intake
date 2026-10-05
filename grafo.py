@@ -1,15 +1,16 @@
-"""Workflow que convierte un intake completo en un borrador interno para el equipo.
+"""Workflow que convierte un intake completo en un borrador interno para el equipo
+y en una propuesta para el cliente.
 
 El flujo es fijo (StateGraph); el modelo solo trabaja dentro de cada nodo:
 
     evaluar → triage ─(vaga)→ pedir_datos → END
-                     └(ok)──→ buscar_casos → redactar → revisar ─(ok o 2 intentos)→ END
-                                                ↑__________________|(problemas)
+                     └(ok)──→ buscar → redactar ⇄ revisar → componer ⇄ revisar_propuesta → END
 """
 
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TypedDict
 
@@ -18,7 +19,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
 from pydantic import BaseModel, Field, ValidationError
 
-from intake import SYSTEM, Borrador, buscar_casos, evaluar_encaje, formulario_a_texto
+import avisos
+import deck
+from intake import (CASOS, SYSTEM, SYSTEM_PROPUESTA, Borrador, Propuesta, buscar_casos,
+                    evaluar_encaje, formulario_a_texto)
 
 MAX_INTENTOS = 2
 
@@ -38,6 +42,9 @@ class Estado(TypedDict, total=False):
     borrador: Borrador
     problemas: list[str]
     intentos: int
+    propuesta: Propuesta
+    problemas_propuesta: list[str]
+    intentos_propuesta: int
 
 
 def _modelo():
@@ -108,6 +115,57 @@ def despues_de_triage(estado: Estado) -> str:
 def despues_de_revisar(estado: Estado) -> str:
     if estado["problemas"] and estado["intentos"] < MAX_INTENTOS:
         return "redactar"
+    return "componer"
+
+
+def componer(estado: Estado) -> Estado:
+    llm = _modelo().with_structured_output(Propuesta, method="function_calling")
+    b = estado["borrador"]
+    contexto = (
+        f"INTAKE\n{formulario_a_texto(estado['formulario'])}\n\n"
+        f"BORRADOR INTERNO (no se lo muestres tal cual al cliente)\n"
+        f"Alcance: {b.alcance}\nFuera de alcance: {b.fuera_de_alcance}\nRiesgos: {b.riesgos}\n"
+        f"Preguntas abiertas: {b.preguntas_abiertas}\nNota interna: {b.nota_interna}\n\n"
+        f"CASOS DE REFERENCIA: {[c['nombre'] + ': ' + c['objetivo'] for c in CASOS]}"
+    )
+    if estado.get("problemas_propuesta"):
+        contexto += f"\n\nTu propuesta anterior tenía estos problemas, corregilos: {estado['problemas_propuesta']}"
+    p = llm.invoke([("system", SYSTEM_PROPUESTA), ("user", contexto)])
+    return {"propuesta": p, "intentos_propuesta": estado.get("intentos_propuesta", 0) + 1}
+
+
+# Lo que el cliente nunca puede ver, verificado en código y no solo pedido en el prompt.
+PRECIO = re.compile(r"(US\$|R\$|\$|€|\b(usd|brl|dólares?|dolares?|reais|reales)\b)", re.I)
+PLAZO = re.compile(r"\b\d+\s*(semanas?|meses|mes|días?|dias?|mês)\b", re.I)
+
+
+def textos(p: Propuesta) -> list[str]:
+    salida = [p.titulo, p.para, p.lo_que_nos_contaste, p.costo_hoy or "", p.por_que_el_caso or ""]
+    salida += p.como_se_ve_resuelto + p.lo_que_falta_definir
+    for e in p.etapas:
+        salida += [e.nombre, e.objetivo, *e.incluye]
+    return salida
+
+
+def revisar_propuesta(estado: Estado) -> Estado:
+    p, problemas = estado["propuesta"], []
+    todo = "\n".join(textos(p))
+    if "—" in todo:
+        problemas.append("Hay guiones largos (—). Reemplazalos por dos puntos, coma o punto.")
+    if PRECIO.search(todo):
+        problemas.append(f"Menciona un precio o una moneda ('{PRECIO.search(todo).group(0)}'). Sacalo: se define en la reunión.")
+    if PLAZO.search(todo):
+        problemas.append(f"Menciona un plazo ('{PLAZO.search(todo).group(0)}'). Sacalo: se define en la reunión.")
+    if p.caso and p.caso not in {c["nombre"] for c in CASOS}:
+        problemas.append(f"El caso '{p.caso}' no existe. Usá un nombre exacto de la lista o null.")
+    if not 2 <= len(p.etapas) <= 3:
+        problemas.append("Tienen que ser dos o tres etapas.")
+    return {"problemas_propuesta": problemas}
+
+
+def despues_de_revisar_propuesta(estado: Estado) -> str:
+    if estado["problemas_propuesta"] and estado["intentos_propuesta"] < MAX_INTENTOS:
+        return "componer"
     return END
 
 
@@ -124,6 +182,8 @@ def build_graph():
     g.add_node("buscar", buscar)
     g.add_node("redactar", redactar, retry_policy=reintento)
     g.add_node("revisar", revisar)
+    g.add_node("componer", componer, retry_policy=reintento)
+    g.add_node("revisar_propuesta", revisar_propuesta)
 
     g.add_edge(START, "evaluar")
     g.add_edge("evaluar", "triage")
@@ -131,7 +191,9 @@ def build_graph():
     g.add_edge("pedir_datos", END)
     g.add_edge("buscar", "redactar")
     g.add_edge("redactar", "revisar")
-    g.add_conditional_edges("revisar", despues_de_revisar, ["redactar", END])
+    g.add_conditional_edges("revisar", despues_de_revisar, ["redactar", "componer"])
+    g.add_edge("componer", "revisar_propuesta")
+    g.add_conditional_edges("revisar_propuesta", despues_de_revisar_propuesta, ["componer", END])
     return g.compile()
 
 
@@ -142,6 +204,8 @@ def resumir(s: Estado) -> dict:
         "preguntas": s["triage"].faltantes if s["triage"].vaga else [],
         "problemas": s.get("problemas", []),
         "intentos": s.get("intentos", 0),
+        "propuesta": s["propuesta"].model_dump() if s.get("propuesta") else None,
+        "problemas_propuesta": s.get("problemas_propuesta", []),
     }
 
 
@@ -150,15 +214,36 @@ def procesar(formulario: dict, graph=None) -> dict:
 
 
 def completar_borrador(destino: Path, graph=None) -> None:
-    """Agrega el borrador al JSON que dejó enviar_intake. Lo usan la API y el chat de terminal."""
-    # El formulario ya está en disco: si el modelo falla, el lead no se pierde.
+    """Después de enviar_intake: redacta, arma la propuesta (HTML + PDF) y avisa al equipo.
+    Lo usan la API (en segundo plano) y el chat de terminal."""
+    log = logging.getLogger("uvicorn.error")
+    # El formulario ya está en disco: si algo falla de acá en adelante, el lead no se pierde.
     registro = json.loads(destino.read_text()) | {"error": None}
     try:
         registro |= procesar(registro["formulario"], graph)
     except Exception as e:
-        logging.getLogger("uvicorn.error").exception("intake: falló el grafo")
+        log.exception("intake: falló el grafo")
         registro["error"] = repr(e)
+
+    pdf = None
+    if registro.get("propuesta"):
+        try:
+            html = destino.with_suffix(".html")
+            html.write_text(deck.render(Propuesta(**registro["propuesta"]),
+                                        os.environ.get("AGENDA_URL", "[TU LINK DE AGENDA]")))
+            pdf = destino.with_suffix(".pdf") if deck.a_pdf(html, destino.with_suffix(".pdf")) else None
+        except Exception as e:
+            log.exception("intake: falló el deck")
+            registro["error"] = registro["error"] or f"deck: {e!r}"
     destino.write_text(json.dumps(registro, ensure_ascii=False, indent=2))
+
+    try:  # el aviso va último: si el webhook falla, todo lo anterior ya está guardado
+        payload = {"tipo": "nuevo_intake", "text": avisos.texto_intake(destino.stem, registro)}
+        if pdf:
+            payload["archivo"] = avisos.adjunto(pdf, f"Propuesta · {registro['propuesta']['titulo']}")
+        avisos.enviar(payload)
+    except Exception:
+        log.exception("intake: no se pudo avisar por el webhook")
 
 
 if __name__ == "__main__":
